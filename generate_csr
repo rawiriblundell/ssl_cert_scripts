@@ -1,0 +1,33 @@
+#!/bin/bash
+# Usage: generate_csr [cert path]
+# To generate a CSR, run 'generate_csr [cert path]'
+# To sign a CSR, drop the .pem or .cer file into its path and run 'sign_csr [cert path]'
+#
+# Example:
+# generate_csr foo.contoso.com
+# sign_csr foo.contoso.com
+
+main() {
+    (( "${#}" != 1 )) && {
+        printf -- '%s\n' "Usage: generate_csr [cert path]" >&2
+        exit 1   
+    }
+    local keyname
+    keyname="${1%/}"
+    (
+        cd "${keyname}" 2>/dev/null || {
+            printf -- '%s\n' "${keyname} directory was not found" >&2
+            exit 1            
+        }
+
+        # Generate new dhparams
+        openssl dhparam -out dhparams.pem 4096
+
+        # Generate a new key and CSR
+        openssl req -new -newkey rsa:2048 -nodes -config openssl.cnf -keyout "${keyname}.key" -out "${keyname}.csr"
+
+        printf -- '%s\n' "Please send ${keyname}.csr to the appropriate place to be signed"
+    )
+}
+
+main "${@}"

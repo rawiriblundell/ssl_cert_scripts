@@ -1,0 +1,148 @@
+#!/bin/bash
+# Usage: sign_csr [cert path]
+# To generate a CSR, run 'generate_csr [cert path]'
+# To sign a CSR, drop the .pem or .cer file into its path and run 'sign_csr [cert path]'
+#
+# Example:
+# generate_csr foo.contoso.com
+# sign_csr foo.contoso.com
+
+# From: https://github.com/rawiriblundell/sh_libpath/blob/main/lib/sh/openssl/validate_cert.sh
+# Validate a certificate against a key and csr
+# Usage: validate_cert certificate.crt [optional: certificate.key] [optional: certificate.csr]
+# If the key and/or csr are not explicitly defined, we will assume the same basename as the crt
+# e.g. for 'example.com.crt', 'example.com.key' and 'example.com.csr' will be assumed
+validate_cert() {
+    _validate_cert="${1}"
+    _validate_key="${2}"
+    _validate_csr="${3}"
+
+    if (( "${#_validate_cert}" == 0 )); then
+        printf -- 'validate_cert: %s\n' "No input file provided" >&2
+        return 1
+    fi
+
+    if (( "${#_validate_key}" == 0 )); then
+        # We assume either a .pem, .cer, or .crt extension and remove it
+        _validate_key="${_validate_cert%.*}"
+        # We assume a .key file with the same name exists
+        _validate_key="${_validate_key}.key"
+    fi
+
+    # If the csr value isn't given, we assume a .csr file with the same name exists
+    if (( "${#_validate_csr}" == 0 )); then
+        _validate_csr="${_validate_cert%.*}"
+        _validate_csr="${_validate_csr}.csr"
+    fi
+
+    # Next we check if the key and csr are present and readable
+    if [ ! -r "${_validate_key}" ]; then
+        printf -- 'validate_cert: %s\n' "key file not found, specified, or readable" >&2
+        return 1
+    fi
+
+    if [ ! -r "${_validate_csr}" ]; then
+        printf -- 'validate_cert: %s\n' "csr file not found, specified, or readable" >&2
+        return 1
+    fi
+
+    # Now we pull the hashes for each object
+    _cert_hash="$(openssl x509 -noout -modulus -in "${_validate_cert}" | openssl md5)"
+    _key_hash="$(openssl rsa -noout -modulus -in "${_validate_key}" | openssl md5)"
+    _csr_hash="$(openssl req -noout -modulus -in "${_validate_csr}" | openssl md5)"
+    unset -v _validate_cert _validate_key _validate_csr
+
+    # And check those hashes against each other
+    if [ "${_cert_hash}" = "${_key_hash}" ] && [ "${_cert_hash}" = "${_csr_hash}" ]; then
+        unset -v _cert_hash _key_hash _csr_hash
+        return 0
+    fi
+
+    unset -v _cert_hash _key_hash _csr_hash
+    return 1
+}
+
+process_crt() {
+    local keyname extension certfile
+    keyname="${1}"
+    (
+        cd "${keyname}" 2>/dev/null || {
+            printf -- '%s\n' "${keyname} directory was not found" >&2
+            exit 1            
+        }
+
+        # Ensure that all filenames are lowercase
+        printf -- '%s\n' "Ensuring that all files are lowercase..."
+        while read -r; do
+            [[ "${REPLY}" != "${REPLY,,}" ]] && mv "${REPLY}" "${REPLY,,}"
+        done < <(find . -maxdepth 1 -type f -printf "%P\n")
+
+        # Let's find our cert file, possible extensions: .pem, .cer, .crt
+        for extension in pem cer crt; do
+            if [[ -r "${keyname}.${extension}" ]]; then
+                certfile="${keyname}.${extension}"
+                break
+            fi
+        done
+
+        # If certfile is 0-length, then we apparently don't have a file and can't continue
+        (( "${#certfile}" == 0 )) && {
+            printf -- '%s\n' "${keyname}.(pem|cer|crt) expected but not found or not readable" >&2
+            exit 1
+        }
+
+        # If the certfile is in DER mode, we un-DER it
+        openssl x509 -in "${certfile}" -inform der -text -noout >/dev/null 2>&1 && {
+            printf -- '%s\n' "${certfile} appears to be in DER format, converting to PEM and continuing..."
+            openssl x509 -inform DER -in "${certfile}" -out "${certfile}"
+        }
+
+        # Next we validate that it's sane
+        if file "${certfile}" | grep -q CRLF; then
+            if command -v dos2unix >/dev/null 2>&1; then
+                printf -- '%s\n' "Awful windows line endings detected in ${certfile}, attempting to fix with dos2unix..." >&2
+                dos2unix "${certfile}" || exit 1
+            else
+                printf -- '%s\n' "Awful windows line endings detected in ${certfile}, attemping to fix with sed..." >&2
+                sed -ie 's/\r//g' "${certfile}" || exit 1
+            fi
+        else
+            printf -- '%s\n' "Line endings in ${certfile} appear to be fine..."
+        fi
+
+        # Next we validate against the csr and key
+        if ! validate_cert "${certfile}"; then
+            printf -- '%s\n' "Error while validating ${certfile}" >&2
+            printf -- '%s\n' "Typically this is due to unmatched names e.g. check case match" >&2
+            exit 1
+        fi
+        printf -- '%s\n' "${certfile} appears to have passed validation tests..."
+
+        # Extract the cert from the returned file and concatenate it with our chain file
+        cat <(openssl x509 -in "${certfile}") ca.chain.crt > "${keyname}.chained.crt"
+        printf -- '%s\n' "${keyname}.chained.crt created."
+
+        # If we're dealing with a java keystore, then we have to take special steps
+        # This isn't a common issue for me, so this isn't really fleshed out
+        if [[ -f keystore.jks ]]; then
+            printf -- '%s\n' "It looks like this certstore includes a keystore.jks file.  Now we convert ${keyname}.chained.crt to PCKS12 format."
+            # Convert the chained crt to PCKS12 format
+            openssl pkcs12 -export -in "${keyname}.chained.crt" -inkey "${keyname}.key" -out "${keyname}.chained.p12" -name "${keyname}" -chain -CAfile ca.chain.crt -caname root
+
+            printf -- '%s\n' "And now we import our PKCS12 cert into the keystore..."
+            keytool -importkeystore -destkeystore keystore.jks -srckeystore "${keyname}.chained.p12" -srcstoretype PKCS12 -alias "${keyname}" -noprompt
+        fi
+
+    )   
+}
+
+main() {
+    (( "${#}" != 1 )) && {
+        printf -- '%s\n' "Usage: sign_csr [cert path]" >&2
+        exit 1   
+    }
+
+    process_crt "${1%/}"
+}
+
+main "${@}"
