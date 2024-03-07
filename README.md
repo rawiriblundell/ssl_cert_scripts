@@ -6,6 +6,18 @@ I've sanitised the scripts a bit and generated a couple of example per-cert fold
 
 Note: The context for these certs is nginx reverse proxies.
 
+Each certificate has a folder by the same name as the certificate's CN, and within that folder is a file called `openssl.cnf`.  This is the brains of the operation.
+So to add another cert, for example, you could do something like
+
+```
+cp bar.contoso.com baz.contoso.com
+cd baz.contoso.com
+rm baz.contoso.com*
+vi openssl.cnf
+```
+
+Change `openssl.cnf` to suit, and then run the process as described below.
+
 The process is pretty simple:
 
 ```
