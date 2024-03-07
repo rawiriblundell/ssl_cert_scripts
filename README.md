@@ -12,7 +12,7 @@ So to add another cert, for example, you could do something like
 ```
 cp bar.contoso.com baz.contoso.com
 cd baz.contoso.com
-rm baz.contoso.com*
+rm bar.contoso.com*
 vi openssl.cnf
 ```
 
