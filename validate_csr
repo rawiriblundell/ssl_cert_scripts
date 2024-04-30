@@ -1,11 +1,12 @@
 #!/bin/bash
-# Usage: sign_csr [cert path]
+# Usage: validate_csr [cert path]
 # To generate a CSR, run 'generate_csr [cert path]'
-# To sign a CSR, drop the .pem or .cer file into its path and run 'sign_csr [cert path]'
+# To validate the signed CSR, drop the returned .pem or .cer file
+#    into the aforementioned path and run 'validate_csr [cert path]'
 #
 # Example:
 # generate_csr foo.contoso.com
-# sign_csr foo.contoso.com
+# validate_csr foo.contoso.com
 
 # From: https://github.com/rawiriblundell/sh_libpath/blob/main/lib/sh/openssl/validate_cert.sh
 # Validate a certificate against a key and csr
@@ -138,7 +139,7 @@ process_crt() {
 
 main() {
     (( "${#}" != 1 )) && {
-        printf -- '%s\n' "Usage: sign_csr [cert path]" >&2
+        printf -- '%s\n' "Usage: validate_csr [cert path]" >&2
         exit 1   
     }
 
