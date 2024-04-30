@@ -40,14 +40,12 @@ Then I send the CSR off to the customer's cert team to sign and return.
 I plonk the returned file into the given per-cert folder and run:
 
 ```
-./sign_csr foo.contoso.com
+./validate_csr foo.contoso.com
 Ensuring that all files are lowercase...
 foo.contoso.com.cer appears to be in DER format, converting to PEM and continuing...
 Line endings in foo.contoso.com.cer appear to be fine...
 foo.contoso.com.cer appears to have passed validation tests...
 foo.contoso.com.chained.crt created.
 ```
-
-Probably `sign_csr` should be `validate_csr`.  Shrug.
 
 Security note: Obviously don't store your certs in a public git repo!
