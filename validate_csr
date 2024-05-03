@@ -63,74 +63,111 @@ validate_cert() {
     return 1
 }
 
+# Format our output.  Examples:
+# puts 2 string: "--> string"
+# puts 4 string: "----> string"
+puts() {
+    case "${1}" in
+        (2)
+            shift 1
+            printf -- '--> %s\n' "${*}" >&2
+        ;;
+        (4)
+            shift 1
+            printf -- '----> %s\n' "${*}" >&2 
+        ;;
+        (6)
+            shift 1
+            printf -- '------> %s\n' "${*}" >&2 
+        ;;
+        (*)
+            printf -- '%s\n' "${*}" >&2
+        ;;
+    esac
+}
+
 process_crt() {
     local keyname extension certfile
     keyname="${1}"
     (
-        cd "${keyname}" 2>/dev/null || {
-            printf -- '%s\n' "${keyname} directory was not found" >&2
+        cd "${keyname}" >/dev/null 2>&1 || {
+            puts "${keyname} directory was not found"
             exit 1            
         }
 
+        puts "Processing certificate for ${keyname}..."
+
         # Ensure that all filenames are lowercase
-        printf -- '%s\n' "Ensuring that all files are lowercase..."
+        puts 2 "Ensuring that all files are lowercase..."
         while read -r; do
             [[ "${REPLY}" != "${REPLY,,}" ]] && mv "${REPLY}" "${REPLY,,}"
         done < <(find . -maxdepth 1 -type f -printf "%P\n")
 
         # Let's find our cert file, possible extensions: .pem, .cer, .crt
+        puts 2 "Checking for signed file with .pem, .cer or .crt extension (in that order)"
         for extension in pem cer crt; do
             if [[ -r "${keyname}.${extension}" ]]; then
-                certfile="${keyname}.${extension}"
-                break
+                # Test if the file is aged
+                puts 4 "${keyname}.${extension} found.  Checking its age..."
+                if [[ "$(find . -name "${keyname}.${extension}" -mtime -1 2>/dev/null)" ]]; then
+                    puts 6 "[OK] File appears to be less than 24 hours old."
+                    certfile="${keyname}.${extension}"
+                    # Exit the for loop
+                    break
+                else
+                    puts 6 "[FAILED] File should be less than 24 hours old."
+                    # Cycle to the next for loop item
+                    continue
+                fi
             fi
         done
 
-        # If certfile is 0-length, then we apparently don't have a file and can't continue
+        # If the $certfile var is 0-length, then we apparently don't have a file and can't continue
         (( "${#certfile}" == 0 )) && {
-            printf -- '%s\n' "${keyname}.(pem|cer|crt) expected but not found or not readable" >&2
+            puts 2 "${keyname}.(pem|cer|crt) expected but not found, not readable, or too old."
             exit 1
         }
 
         # If the certfile is in DER mode, we un-DER it
         openssl x509 -in "${certfile}" -inform der -text -noout >/dev/null 2>&1 && {
-            printf -- '%s\n' "${certfile} appears to be in DER format, converting to PEM and continuing..."
+            puts 2 "${certfile} appears to be in DER format, converting to PEM and continuing..."
             openssl x509 -inform DER -in "${certfile}" -out "${certfile}"
         }
 
         # Next we validate that it's sane
         if file "${certfile}" | grep -q CRLF; then
             if command -v dos2unix >/dev/null 2>&1; then
-                printf -- '%s\n' "Awful windows line endings detected in ${certfile}, attempting to fix with dos2unix..." >&2
+                puts 2 "Awful windows line endings detected in ${certfile}, attempting to fix with dos2unix..."
                 dos2unix "${certfile}" || exit 1
             else
-                printf -- '%s\n' "Awful windows line endings detected in ${certfile}, attemping to fix with sed..." >&2
+                puts 2 "Awful windows line endings detected in ${certfile}, attemping to fix with sed..."
                 sed -ie 's/\r//g' "${certfile}" || exit 1
             fi
         else
-            printf -- '%s\n' "Line endings in ${certfile} appear to be fine..."
+            puts 2 "Line endings in ${certfile} appear to be fine..."
         fi
 
         # Next we validate against the csr and key
         if ! validate_cert "${certfile}"; then
-            printf -- '%s\n' "Error while validating ${certfile}" >&2
-            printf -- '%s\n' "Typically this is due to unmatched names e.g. check case match" >&2
+            puts 2 "Error while validating ${certfile}" >&2
+            puts 4 "Typically this is due to mismatched names e.g. check case match"
             exit 1
         fi
-        printf -- '%s\n' "${certfile} appears to have passed validation tests..."
+        puts 2 "${certfile} appears to have passed validation tests..."
 
         # Extract the cert from the returned file and concatenate it with our chain file
         cat <(openssl x509 -in "${certfile}") ca.chain.crt > "${keyname}.chained.crt"
-        printf -- '%s\n' "${keyname}.chained.crt created."
+        puts 2 "${keyname}.chained.crt created."
 
         # If we're dealing with a java keystore, then we have to take special steps
         # This isn't a common issue for me, so this isn't really fleshed out
         if [[ -f keystore.jks ]]; then
-            printf -- '%s\n' "It looks like this certstore includes a keystore.jks file.  Now we convert ${keyname}.chained.crt to PCKS12 format."
+            puts 2 "keystore.jks file found."
+            puts 4 "Converting ${keyname}.chained.crt to PCKS12 format."
             # Convert the chained crt to PCKS12 format
             openssl pkcs12 -export -in "${keyname}.chained.crt" -inkey "${keyname}.key" -out "${keyname}.chained.p12" -name "${keyname}" -chain -CAfile ca.chain.crt -caname root
 
-            printf -- '%s\n' "And now we import our PKCS12 cert into the keystore..."
+            puts 4 "Importing PKCS12 cert into the keystore..."
             keytool -importkeystore -destkeystore keystore.jks -srckeystore "${keyname}.chained.p12" -srcstoretype PKCS12 -alias "${keyname}" -noprompt
         fi
 
@@ -139,7 +176,7 @@ process_crt() {
 
 main() {
     (( "${#}" != 1 )) && {
-        printf -- '%s\n' "Usage: validate_csr [cert path]" >&2
+        puts 2 "Usage: validate_csr [cert path]"
         exit 1   
     }
 
